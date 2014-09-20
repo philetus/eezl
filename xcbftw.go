@@ -64,37 +64,39 @@ func Xconnect() *Xscreen {
 	return &Xscreen{conn: con, setup: set, screen: scr, vistype: vzt}
 }
 
+/*
+// input event types
+const (
+	PointerMotion int = iota
+	PointerPress
+	PointerRelease
+	KeyPress
+	KeyRelease
+}
+
+// represents pointer motion and press events and keyboard events
+type InputEvent struct {
+
+}
+*/	
+
 type Xwin struct {
 	xscreen *Xscreen
 	height, width int
-	//context_id C.xcb_gcontext_t
 	window_id C.xcb_window_t
-	//pixmap_id C.xcb_pixmap_t
+	pixmap_id C.xcb_pixmap_t
+	xcontext_id C.xcb_gcontext_t
 }
 
-func (self *Xscreen) NewXwin(hght, wdth int) *Xwin {
-	//var pid C.xcb_pixmap_t = C.xcb_generate_id(xscr.conn)
-	
-	// generate context id and create graphics context 
-	/*
-	var cid C.xcb_gcontext_t = C.xcb_generate_id(self.conn)
-	var cmsk int = C.XCB_GC_FOREGROUND | C.XCB_GC_BACKGROUND
-	cval := []int{self.screen.black_pixel, self.screen.white_pixel}
-	cvalp := (*C.int)(&cval[0])
-	C.xcb_create_gc(self.conn, 
-                    cid, 
-					self.screen.root, 
-					C.int(cmsk), 
-					cvalp)
-	*/
+func (self *Xscreen) NewXwin(hght, wdth int) *Xwin {	
 
 	// generate window id and create window
 	var wid C.xcb_window_t = C.xcb_window_t(C.xcb_generate_id(self.conn))
 	var wmsk int = C.XCB_CW_BACK_PIXEL | C.XCB_CW_EVENT_MASK
 	wval := []C.uint32_t{self.screen.white_pixel, C.XCB_EVENT_MASK_EXPOSURE}
 	wvalp := (*C.uint32_t)(&wval[0])
-	C.xcb_create_window(self.conn,                          // connection
-                        C.XCB_COPY_FROM_PARENT,             // depth
+	C.xcb_create_window(self.conn,                          // x connection
+                        self.screen.root_depth,             // depth (must match pixmap)
                         wid,                                // window id
                         self.screen.root,                   // parent window
                         0, 0,                               // x, y
@@ -102,13 +104,33 @@ func (self *Xscreen) NewXwin(hght, wdth int) *Xwin {
                         0,                                  // border_width
                         C.XCB_WINDOW_CLASS_INPUT_OUTPUT,    // class
                         self.screen.root_visual,            // visual
-                        C.uint32_t(wmsk), wvalp);                // masks
+                        C.uint32_t(wmsk), wvalp);           // masks
 	
+	// generate pixmap for double-buffered rendering
+	var pid C.xcb_pixmap_t = C.xcb_pixmap_t(C.xcb_generate_id(self.conn))
+	C.xcb_create_pixmap(self.conn,                          // x connection
+                        self.screen.root_depth,             // depth of the screen
+                        pid,                                // id of the pixmap
+                        C.xcb_drawable_t(self.screen.root), // ???
+                        C.uint16_t(wdth), C.uint16_t(hght)) // width, height
+                        	
+	// generate context id and create graphics context 
+	var xcid C.xcb_gcontext_t = C.xcb_gcontext_t(C.xcb_generate_id(self.conn))
+	var xcmsk int = C.XCB_GC_FOREGROUND | C.XCB_GC_BACKGROUND
+	xcval := []C.uint32_t{self.screen.black_pixel, self.screen.white_pixel}
+	xcvalp := (*C.uint32_t)(&xcval[0])
+	C.xcb_create_gc(self.conn, 
+                    xcid, 
+					C.xcb_drawable_t(self.screen.root), 
+					C.uint32_t(xcmsk), 
+					xcvalp)
+
 	// show window on screen
 	C.xcb_map_window(self.conn, wid)
 	C.xcb_flush(self.conn)
 
-	return &Xwin{xscreen: self, height: hght, width: wdth, window_id: wid}
+	return &Xwin{xscreen: self, height: hght, width: wdth, 
+				 window_id: wid, pixmap_id: pid, xcontext_id: xcid}
 }
 
 /*
