@@ -86,6 +86,7 @@ type Xwin struct {
 	window_id C.xcb_window_t
 	pixmap_id C.xcb_pixmap_t
 	xcontext_id C.xcb_gcontext_t
+	surface *C.cairo_surface_t
 }
 
 func (self *Xscreen) NewXwin(hght, wdth int) *Xwin {	
@@ -114,7 +115,7 @@ func (self *Xscreen) NewXwin(hght, wdth int) *Xwin {
                         C.xcb_drawable_t(self.screen.root), // ???
                         C.uint16_t(wdth), C.uint16_t(hght)) // width, height
                         	
-	// generate context id and create graphics context 
+	// create simple graphics context for copying pixmap buffer to window
 	var xcid C.xcb_gcontext_t = C.xcb_gcontext_t(C.xcb_generate_id(self.conn))
 	var xcmsk int = C.XCB_GC_FOREGROUND | C.XCB_GC_BACKGROUND
 	xcval := []C.uint32_t{self.screen.black_pixel, self.screen.white_pixel}
@@ -125,21 +126,23 @@ func (self *Xscreen) NewXwin(hght, wdth int) *Xwin {
 					C.uint32_t(xcmsk), 
 					xcvalp)
 
+	// create a cairo surface tied to pixmap for rendering to buffer
+	srf := C.cairo_xcb_surface_create(self.conn,                // x connection
+									  C.xcb_drawable_t(pid),    // drawable
+									  self.vistype,             // visual type
+									  C.int(wdth), C.int(hght)) // width, height
+	
 	// show window on screen
 	C.xcb_map_window(self.conn, wid)
 	C.xcb_flush(self.conn)
 
 	return &Xwin{xscreen: self, height: hght, width: wdth, 
-				 window_id: wid, pixmap_id: pid, xcontext_id: xcid}
+				 window_id: wid, pixmap_id: pid, xcontext_id: xcid, 
+				 surface: srf}
 }
 
 /*
 func (self *Xwin) NewCairoSurface() *cairo.Surface {
-	var csrf C.cairo_surface_t = C.cairo_xcb_surface_create(
-									self.xscreen.conn,
-									self.window_id,
-									&xcb_visualtype, 
-									C.int(wdth), C.int(hght))
 	return cairo.NewSurfaceFromC(s *C.cairo_surface_t, c *C.cairo_t)
 }
 */
