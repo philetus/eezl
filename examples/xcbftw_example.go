@@ -7,7 +7,10 @@ import (
 
 func main() {
 	xscreen := eezl.Xconnect() // get connection to x server screen
-	xscreen.NewXwin(300, 200) // open window
+	eezl := xscreen.NewEezl(300, 200) // open window
 	fmt.Printf("created new window!\n")
-	for {} // loop
+	for {
+		inpt := <-eezl.InputPipe
+		fmt.Printf(".%d", inpt.Flavr)
+	}
 }
