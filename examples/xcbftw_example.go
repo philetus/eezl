@@ -11,11 +11,13 @@ func main() {
 	fmt.Printf("created new eezl!\n")
 	for {
 		select {
+			
 			case inpt := <-ez.InputPipe:
 				fmt.Printf(".%d", inpt.Flavr)
 				if inpt.Flavr == eezl.PointerPress {
 					ez.Stain()
 				}
+				
 			case gel := <- ez.GelPipe:
 			
 				// draw a red rectangle

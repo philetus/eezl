@@ -72,7 +72,7 @@ import "C"
 
 import (
 	"fmt"
-	//"github.com/philetus/go-cairo"
+	"github.com/philetus/eezl/keys"
 )
 
 // go struct to hold xcb connection data to an xserver screen
@@ -115,17 +115,21 @@ type Input struct {
 	Flavr int
 	Timestamp int
 	Y, X int
-	Keycode int
+	Stroke *keys.Key
 }
 
 // request to generate a new gel
-type GelStain struct {
+type gelStain struct {
 	Resize bool
 	Height, Width int
 }
 
-
-
+// eezl is window with cairo drawing surface and event handlers
+// 
+// * input events are passed thru the input pipe
+// * gels (individual 2d frames with cairo vector drawing methods) are passed
+//   thru the gel pipe
+// *
 type Eezl struct {
 	xscreen *Xscreen
 	dead bool
@@ -134,9 +138,9 @@ type Eezl struct {
 	pixmap_id C.xcb_pixmap_t
 	xcontext_id C.xcb_gcontext_t
 	surface *C.cairo_surface_t
+	stainPipe chan *gelStain
 	
 	InputPipe chan *Input
-	StainPipe chan *GelStain
 	GelPipe chan *Gel
 }
 
@@ -201,8 +205,8 @@ func (self *Xscreen) NewEezl(hght, wdth int) *Eezl {
 				 height: hght, width: wdth, 
 				 window_id: wid, pixmap_id: pid, xcontext_id: xcid, 
 				 surface: srf, 
+				 stainPipe: make(chan *gelStain, 1), // stainpipe holds 1 request
 				 InputPipe: make(chan *Input, 256),
-				 StainPipe: make(chan *GelStain, 1), // stainpipe holds 1 request
 				 GelPipe: make(chan *Gel)}
 	
 	// add new eezl to xscreen eezls map
@@ -217,7 +221,7 @@ func (self *Xscreen) NewEezl(hght, wdth int) *Eezl {
 // process gel stains as they come off of stain pipe
 func (self *Eezl) stain_loop() {
 	for !self.dead {
-		stn := <-self.StainPipe
+		stn := <-self.stainPipe
 		if stn.Resize {
 		
 			// free old surface and pixmap
@@ -238,8 +242,7 @@ func (self *Eezl) stain_loop() {
 							   C.int(stn.Width), C.int(stn.Height))
 		}
 		
-		// create cairo drawing context from cairo surface and fill it with
-		// background color
+		// create cairo drawing context from cairo surface and fill with white
 		cntxt := C.cairo_create(self.surface)
 		C.cairo_set_source_rgba(cntxt, 1.0, 1.0, 1.0, 1.0)
 		C.cairo_paint(cntxt)
@@ -269,18 +272,6 @@ func (self *Eezl) stain_loop() {
 	}
 }
 
-// mark eezl as stained to trigger new gel to be sent down gelpipe
-func (self *Eezl) Stain() {
-
-	// wrap sending dirty signal in select with default to make it non-blocking
-	// -- if there is already a new gel pending just return
-	select {
-		case self.StainPipe <- 
-			&GelStain{Resize: false, Height: self.height, Width: self.width}:
-		default:
-	}
-}
-
 func (self *Xscreen) event_loop() {
 	for {
 		evnt := C.xcb_wait_for_event(self.conn)
@@ -298,7 +289,7 @@ func (self *Xscreen) event_loop() {
 				if h != ezl.height || w != ezl.width {
 					ezl.height = h
 					ezl.width = w
-					ezl.StainPipe <- &GelStain{Resize: true, 
+					ezl.stainPipe <- &gelStain{Resize: true, 
 											   Height: h, Width: w}
 				}
 
@@ -313,7 +304,7 @@ func (self *Xscreen) event_loop() {
 				// to make it non-blocking -- if there is already a new gel 
 				// pending ignore expose event
 				select {
-					case ezl.StainPipe <- &GelStain{Resize: false, 
+					case ezl.stainPipe <- &gelStain{Resize: false, 
 													Height: ezl.height, 
 													Width: ezl.width}:
 					default:
@@ -352,7 +343,7 @@ func (self *Xscreen) event_loop() {
 				wid := kpe.event
 				inp := &Input{Flavr: KeyPress,
 							  Timestamp: int(kpe.time),
-							  Keycode: int(kpe.detail)}
+							  Stroke: keys.New(int(kpe.detail))}
 				self.eezldeks[wid].InputPipe <- inp
 
 			case C.XCB_KEY_RELEASE:
@@ -360,7 +351,7 @@ func (self *Xscreen) event_loop() {
 				wid := kre.event
 				inp := &Input{Flavr: KeyRelease,
 							  Timestamp: int(kre.time),
-							  Keycode: int(kre.detail)}
+							  Stroke: keys.New(int(kre.detail))}
 				self.eezldeks[wid].InputPipe <- inp
 			
 		    // random unhelpful events?
@@ -373,101 +364,3 @@ func (self *Xscreen) event_loop() {
 		}
 	}
 }
-
-// mapping from x key codes to {unshifted, shifted} values
-var (
-	Xkeys = map[int][2]string{
-
-		// row 0
-		9: {"esc", ""},
-		67: {"f1", ""},
-		68: {"f2", ""},
-		69: {"f3", ""},
-		70: {"f4", ""},
-		71: {"f5", ""},
-		72: {"f6", ""},
-		73: {"f7", ""},
-		74: {"f8", ""},
-		75: {"f9", ""},
-		76: {"f10", ""},
-		119: {"del", ""},
-	
-		// row 1
-		49: {"`", "~"},
-		10: {"1", "!"},
-		11: {"2", "@"},
-		12: {"3", "#"},
-		13: {"4", "$"},
-		14: {"5", "%"},
-		15: {"6", "^"},
-		16: {"7", "&"},
-		17: {"8", "*"},
-		18: {"9", "#"},
-		19: {"0", ")"},
-		20: {"-", "_"},
-		21: {"=", "+"},
-		22: {"bksp", ""},
-	
-		// row 2
-		23: {"tab", ""},
-		24: {"q", "Q"},
-		25: {"w", "W"},
-		26: {"e", "E"},
-		27: {"r", "R"},
-		28: {"t", "T"},
-		29: {"y", "Y"},
-		30: {"u", "U"},
-		31: {"i", "I"},
-		32: {"o", "O"},
-		33: {"p", "P"},
-		34: {"[", "{"},
-		35: {"]", "}"},
-		51: {"\\", "|"},
-	
-		// row 3
-		66: {"caps", ""},
-		38: {"a", "A"},
-		39: {"s", "S"},
-		40: {"d", "D"},
-		41: {"f", "F"},
-		42: {"g", "G"},
-		43: {"h", "H"},
-		44: {"j", "J"},
-		45: {"k", "K"},
-		46: {"l", "L"},
-		47: {";", ":"},
-		48: {"'", "\""},
-		36: {"enter", ""},
-	
-		// row 4
-		50: {"l_shift", ""},
-		52: {"z", "Z"},
-		53: {"x", "X"},
-		54: {"c", "C"},
-		55: {"v", "V"},
-		56: {"b", "B"},
-		57: {"n", "N"},
-		58: {"m", "M"},
-		59: {",", "<"},
-		60: {".", ">"},
-		61: {"/", "?"},
-		62: {"r_shift", ""},
-	
-		// row 5
-		37: {"l_ctrl", ""},
-		64: {"l_alt", ""},
-		65: {"space", ""},
-		108: {"r_alt", ""},
-		105: {"r_ctrl", ""},
-	
-		// arrows
-		110: {"home", ""},
-		111: {"up", ""},
-		112: {"pgup", ""},
-		113: {"left", ""},
-		114: {"right", ""},
-		115: {"end", ""},
-		116: {"down", ""},
-		117: {"pgdn", ""},
-	}
-)
