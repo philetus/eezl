@@ -60,6 +60,11 @@ func (self *Gel) Beby(dy, dx, dcy0, dcx0, dcy1, dcx1 float64) {
 					 C.double(dcx1), C.double(dcy1))
 }
 
+// coat gel with current color
+func (self *Gel) Coat() {
+	C.cairo_paint(self.context)
+}
+
 // seal current gel subpath (from current position to last point after jump)
 func (self *Gel) Seal() {
 	C.cairo_close_path(self.context)

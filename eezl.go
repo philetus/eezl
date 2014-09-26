@@ -2,6 +2,11 @@
 
 package eezl
 
+import (
+	//"fmt"
+	"github.com/philetus/eezl/keys"
+)
+
 // mark eezl as stained to trigger new gel to be sent down gel pipe
 func (self *Eezl) Stain() {
 
@@ -13,4 +18,22 @@ func (self *Eezl) Stain() {
 		default:
 	}
 }
+
+// input flavrs
+const (
+	PointerMotion int = iota
+	PointerPress
+	PointerRelease
+	KeyPress
+	KeyRelease
+)
+
+// represents pointer motion and press events and keyboard events
+type Input struct {
+	Flavr int
+	Timestamp int
+	Y, X int
+	Stroke *keys.Key
+}
+
 

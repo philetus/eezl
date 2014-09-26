@@ -101,23 +101,6 @@ func Xconnect() *Xscreen {
 	return xscrn
 }
 
-// input flavrs
-const (
-	PointerMotion int = iota
-	PointerPress
-	PointerRelease
-	KeyPress
-	KeyRelease
-)
-
-// represents pointer motion and press events and keyboard events
-type Input struct {
-	Flavr int
-	Timestamp int
-	Y, X int
-	Stroke *keys.Key
-}
-
 // request to generate a new gel
 type gelStain struct {
 	Resize bool
@@ -242,15 +225,12 @@ func (self *Eezl) stain_loop() {
 							   C.int(stn.Width), C.int(stn.Height))
 		}
 		
-		// create cairo drawing context from cairo surface and fill with white
-		cntxt := C.cairo_create(self.surface)
-		C.cairo_set_source_rgba(cntxt, 1.0, 1.0, 1.0, 1.0)
-		C.cairo_paint(cntxt)
-		
 		// get new gel and send it down gelpipe to be drawn to
-		gel := &Gel{context: cntxt,
+		gel := &Gel{context: C.cairo_create(self.surface),
 					trigger_pipe: make(chan bool, 1),
 					Height: stn.Height, Width: stn.Width}
+		gel.SetColor(1.0, 1.0, 1.0, 1.0)
+		gel.Coat()
 		self.GelPipe <- gel
 		
 		// block until trigger passed
