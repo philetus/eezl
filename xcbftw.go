@@ -1,6 +1,6 @@
 // +build !goci
 
-// x c binding for the win
+// x c binding for the window
 //
 // connect to x server to:
 //  * make a window
@@ -118,8 +118,17 @@ type Input struct {
 	Keycode int
 }
 
+// request to generate a new gel
+type GelStain struct {
+	Resize bool
+	Height, Width int
+}
+
+
+
 type Eezl struct {
 	xscreen *Xscreen
+	dead bool
 	height, width int
 	window_id C.xcb_window_t
 	pixmap_id C.xcb_pixmap_t
@@ -127,7 +136,8 @@ type Eezl struct {
 	surface *C.cairo_surface_t
 	
 	InputPipe chan *Input
-	//GelPipe chan *GelPak
+	StainPipe chan *GelStain
+	GelPipe chan *Gel
 }
 
 func (self *Xscreen) NewEezl(hght, wdth int) *Eezl {	
@@ -182,20 +192,94 @@ func (self *Xscreen) NewEezl(hght, wdth int) *Eezl {
 									  self.vistype,             // visual type
 									  C.int(wdth), C.int(hght)) // width, height
 	
-	// show window on screen
+	// show eezl window on screen
 	C.xcb_map_window(self.conn, wid)
 	C.xcb_flush(self.conn)
 
-	ezl := &Eezl{xscreen: self, height: hght, width: wdth, 
+	ezl := &Eezl{xscreen: self,
+				 dead: false,
+				 height: hght, width: wdth, 
 				 window_id: wid, pixmap_id: pid, xcontext_id: xcid, 
-				 surface: srf, InputPipe: make(chan *Input, 256)}
+				 surface: srf, 
+				 InputPipe: make(chan *Input, 256),
+				 StainPipe: make(chan *GelStain, 1), // stainpipe holds 1 request
+				 GelPipe: make(chan *Gel)}
 	
 	// add new eezl to xscreen eezls map
 	self.eezldeks[wid] = ezl
 	
+	// start loop to redraw window
+	go ezl.stain_loop()
+	
 	return ezl
 }
 
+// process gel stains as they come off of stain pipe
+func (self *Eezl) stain_loop() {
+	for !self.dead {
+		stn := <-self.StainPipe
+		if stn.Resize {
+		
+			// free old surface and pixmap
+			C.cairo_surface_finish(self.surface)
+			C.xcb_free_pixmap(self.xscreen.conn, self.pixmap_id)
+			
+			// allocate new pixmap and surface with new size
+			//self.pixmap_id = C.xcb_pixmap_t(C.xcb_generate_id(self.xscreen.conn)) ???
+			C.xcb_create_pixmap(self.xscreen.conn,
+                        		self.xscreen.screen.root_depth,
+                        		self.pixmap_id,
+                        		C.xcb_drawable_t(self.xscreen.screen.root),
+                        		C.uint16_t(stn.Width), C.uint16_t(stn.Height))
+			self.surface = C.cairo_xcb_surface_create(
+							   self.xscreen.conn,
+							   C.xcb_drawable_t(self.pixmap_id),
+							   self.xscreen.vistype,
+							   C.int(stn.Width), C.int(stn.Height))
+		}
+		
+		// create cairo drawing context from cairo surface and fill it with
+		// background color
+		cntxt := C.cairo_create(self.surface)
+		C.cairo_set_source_rgba(cntxt, 1.0, 1.0, 1.0, 1.0)
+		C.cairo_paint(cntxt)
+		
+		// get new gel and send it down gelpipe to be drawn to
+		gel := &Gel{context: cntxt,
+					trigger_pipe: make(chan bool, 1),
+					Height: stn.Height, Width: stn.Width}
+		self.GelPipe <- gel
+		
+		// block until trigger passed
+		if <-gel.trigger_pipe {
+		
+			// destroy gels cairo context
+			C.cairo_destroy(gel.context)
+						
+			// copy pixmap buffer from gel onto window
+			C.xcb_copy_area(self.xscreen.conn,
+							C.xcb_drawable_t(self.pixmap_id),
+							C.xcb_drawable_t(self.window_id),
+							self.xcontext_id,
+							0, 0, 0, 0,
+							C.uint16_t(gel.Width), C.uint16_t(gel.Height))
+							
+			C.xcb_flush(self.xscreen.conn)
+		}
+	}
+}
+
+// mark eezl as stained to trigger new gel to be sent down gelpipe
+func (self *Eezl) Stain() {
+
+	// wrap sending dirty signal in select with default to make it non-blocking
+	// -- if there is already a new gel pending just return
+	select {
+		case self.StainPipe <- 
+			&GelStain{Resize: false, Height: self.height, Width: self.width}:
+		default:
+	}
+}
 
 func (self *Xscreen) event_loop() {
 	for {
@@ -204,13 +288,37 @@ func (self *Xscreen) event_loop() {
 		
 			case C.XCB_CONFIGURE_NOTIFY:
 				cne := C.cast_configure_notify_event(evnt)
-			
-				fmt.Printf("caught configure notify event for window %d!\n", int(cne.window))
+				wid := cne.window
+				ezl := self.eezldeks[wid]
+				h := int(cne.height)
+				w := int(cne.width)
+				
+				// if window size has changed send resize stain 
+				// and block until handled
+				if h != ezl.height || w != ezl.width {
+					ezl.height = h
+					ezl.width = w
+					ezl.StainPipe <- &GelStain{Resize: true, 
+											   Height: h, Width: w}
+				}
+
+				//fmt.Printf("caught configure notify event for window %d!\n", int(wid))
 				
 			case C.XCB_EXPOSE:
 				ee := C.cast_expose_event(evnt)
+				wid := ee.window
+				ezl := self.eezldeks[wid]
 				
-				fmt.Printf("caught expose event for window %d!\n", int(ee.window))
+				// wrap sending dirty signal to eezl in select with default
+				// to make it non-blocking -- if there is already a new gel 
+				// pending ignore expose event
+				select {
+					case ezl.StainPipe <- &GelStain{Resize: false, 
+													Height: ezl.height, 
+													Width: ezl.width}:
+					default:
+				}
+				//fmt.Printf("caught expose event for window %d!\n", int(wid))
 
 			case C.XCB_BUTTON_PRESS:
 				bpe := C.cast_button_press_event(evnt)
@@ -255,8 +363,13 @@ func (self *Xscreen) event_loop() {
 							  Keycode: int(kre.detail)}
 				self.eezldeks[wid].InputPipe <- inp
 			
+		    // random unhelpful events?
+		    case C.XCB_NO_EXPOSURE:
+		    case C.XCB_MAP_NOTIFY:
+		    case C.XCB_REPARENT_NOTIFY:
+		    
 			default:
-				fmt.Println("caught unknown event!")
+				fmt.Printf("caught unknown event: %d!\n", int(evnt.response_type))
 		}
 	}
 }
