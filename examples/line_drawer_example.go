@@ -55,6 +55,9 @@ func main() {
 						
 						ez.Stain() // trigger eezl redraw
 					}
+				
+				case eezl.KeyPress:
+					fmt.Println(inpt.Stroke.Name)
 				}
 				
 			case gel := <- ez.GelPipe:
